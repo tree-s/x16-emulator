@@ -2,8 +2,10 @@
 // Copyright (c) 2019 Michael Steil
 // All rights reserved. License: 2-clause BSD
 
+#ifndef __APPLE__
 #define _XOPEN_SOURCE   600
 #define _POSIX_C_SOURCE 1
+#endif
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -377,7 +379,11 @@ usage()
 	printf("-joy2 {NES | SNES}\n");
 	printf("\tChoose what type of joystick to use, e.g. -joy2 SNES\n");
 	printf("-sound <output device>\n");
-	printf("\tSet the output device used for audio emulation");
+	printf("\tSet the output device used for audio emulation\n");
+	printf("-abufs <number of audio buffers>\n");
+	printf("\tSet the number of audio buffers used for playback. (default: 8)\n");
+	printf("\tIncreasing this will reduce stutter on slower computers,\n");
+	printf("\tbut will increase audio latency.\n");
 #ifdef TRACE
 	printf("-trace [<address>]\n");
 	printf("\tPrint instruction trace. Optionally, a trigger address\n");
@@ -410,8 +416,9 @@ main(int argc, char **argv)
 	bool run_geos = false;
 	bool run_test = false;
 	int test_number = 0;
+	int audio_buffers = 8;
 
-    const char *audio_dev_name = NULL;
+	const char *audio_dev_name = NULL;
 
 	run_after_load = false;
 
@@ -695,6 +702,15 @@ main(int argc, char **argv)
 			audio_dev_name = argv[0];
 			argc--;
 			argv++;
+		} else if (!strcmp(argv[0], "-abufs")) {
+			argc--;
+			argv++;
+			if (!argc || argv[0][0] == '-') {
+				usage();
+			}
+			audio_buffers = (int)strtol(argv[0], NULL, 10);
+			argc--;
+			argv++;
 		} else {
 			usage();
 		}
@@ -758,7 +774,7 @@ main(int argc, char **argv)
 
 	SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER | SDL_INIT_AUDIO);
 
-	audio_init(audio_dev_name);
+	audio_init(audio_dev_name, audio_buffers);
 
 	memory_init();
 	video_init(window_scale, scale_quality);
@@ -923,7 +939,7 @@ emulator_loop(void *param)
 			vera_spi_step();
 			new_frame |= video_step(MHZ);
 		}
-        audio_render(clocks);
+		audio_render(clocks);
 
 		instruction_counter++;
 
