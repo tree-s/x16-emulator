@@ -13,6 +13,7 @@
 #include "vera_spi.h"
 #include "vera_psg.h"
 #include "vera_pcm.h"
+#include "icon.h"
 
 #include <limits.h>
 
@@ -166,7 +167,7 @@ video_init(int window_scale, char *quality)
 	video_reset();
 
 	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, quality);
-	SDL_CreateWindowAndRenderer(SCREEN_WIDTH * window_scale, SCREEN_HEIGHT * window_scale, 0, &window, &renderer);
+	SDL_CreateWindowAndRenderer(SCREEN_WIDTH * window_scale, SCREEN_HEIGHT * window_scale, SDL_WINDOW_ALLOW_HIGHDPI, &window, &renderer);
 #ifndef __MORPHOS__
 	SDL_SetWindowResizable(window, true);
 #endif
@@ -178,6 +179,7 @@ video_init(int window_scale, char *quality)
 									SCREEN_WIDTH, SCREEN_HEIGHT);
 
 	SDL_SetWindowTitle(window, "Commander X16");
+	SDL_SetWindowIcon(window, CommanderX16Icon());
 
 	SDL_ShowCursor(SDL_DISABLE);
 
@@ -832,13 +834,13 @@ video_get_irq_out()
 //
 
 void
-video_save(FILE *f)
+video_save(SDL_RWops *f)
 {
-	fwrite(&video_ram[0], sizeof(uint8_t), sizeof(video_ram), f);
-	fwrite(&reg_composer[0], sizeof(uint8_t), sizeof(reg_composer), f);
-	fwrite(&palette[0], sizeof(uint8_t), sizeof(palette), f);
-	fwrite(&reg_layer[0][0], sizeof(uint8_t), sizeof(reg_layer), f);
-	fwrite(&sprite_data[0], sizeof(uint8_t), sizeof(sprite_data), f);
+	SDL_RWwrite(f, &video_ram[0], sizeof(uint8_t), sizeof(video_ram));
+	SDL_RWwrite(f, &reg_composer[0], sizeof(uint8_t), sizeof(reg_composer));
+	SDL_RWwrite(f, &palette[0], sizeof(uint8_t), sizeof(palette));
+	SDL_RWwrite(f, &reg_layer[0][0], sizeof(uint8_t), sizeof(reg_layer));
+	SDL_RWwrite(f, &sprite_data[0], sizeof(uint8_t), sizeof(sprite_data));
 }
 
 bool
