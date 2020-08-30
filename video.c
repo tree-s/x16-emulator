@@ -508,7 +508,7 @@ render_sprite_line(const uint16_t y)
 			// 8bpp
 			memcpy(unpacked_sprite_line, bitmap_data, props->sprite_width);
 		}
-		
+
 		for (uint16_t sx = 0; sx < props->sprite_width; ++sx) {
 			const uint16_t line_x = props->sprite_x + sx;
 			if (line_x >= SCREEN_WIDTH) {
@@ -532,7 +532,7 @@ render_sprite_line(const uint16_t y)
 				sprite_line_collisions |= sprite_line_mask[line_x] & props->sprite_collision_mask;
 				sprite_line_mask[line_x] |= props->sprite_collision_mask;
 
-        if (props->sprite_zdepth > sprite_line_z[line_x]) {
+			if (props->sprite_zdepth > sprite_line_z[line_x]) {
 					sprite_line_col[line_x] = col_index + props->palette_offset;
 					sprite_line_z[line_x] = props->sprite_zdepth;
 				}
@@ -1055,6 +1055,18 @@ bool
 video_update()
 {
 	static bool cmd_down = false;
+
+	// if LED is on, stamp red 8x4 square into top right of framebuffer
+	if (led_status) {
+		for (int y = 0; y < 4; y++) {
+			for (int x = SCREEN_WIDTH - 8; x < SCREEN_WIDTH; x++) {
+				framebuffer[(y * SCREEN_WIDTH + x) * 4 + 0] = 0x00;
+				framebuffer[(y * SCREEN_WIDTH + x) * 4 + 1] = 0x00;
+				framebuffer[(y * SCREEN_WIDTH + x) * 4 + 2] = 0xff;
+				framebuffer[(y * SCREEN_WIDTH + x) * 4 + 3] = 0x00;
+			}
+		}
+	}
 
 	SDL_UpdateTexture(sdlTexture, NULL, framebuffer, SCREEN_WIDTH * 4);
 
