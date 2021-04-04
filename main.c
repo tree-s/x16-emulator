@@ -2,10 +2,6 @@
 // Copyright (c) 2019 Michael Steil
 // All rights reserved. License: 2-clause BSD
 
-#ifndef __APPLE__
-#define _XOPEN_SOURCE   600
-#define _POSIX_C_SOURCE 1
-#endif
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -17,11 +13,14 @@
 #include <ctype.h>
 #endif
 #include "cpu/fake6502.h"
+#include "timing.h"
 #include "disasm.h"
 #include "memory.h"
 #include "video.h"
 #include "via.h"
 #include "ps2.h"
+#include "i2c.h"
+#include "rtc.h"
 #include "vera_spi.h"
 #include "sdcard.h"
 #include "loadsave.h"
@@ -80,17 +79,12 @@ bool dump_vram = false;
 bool warp_mode = false;
 echo_mode_t echo_mode;
 bool save_on_exit = true;
+bool set_system_time = false;
 gif_recorder_state_t record_gif = RECORD_GIF_DISABLED;
 char *gif_path = NULL;
 uint8_t keymap = 0; // KERNAL's default
 int window_scale = 1;
 char *scale_quality = "best";
-
-int frames;
-int32_t sdlTicks_base;
-int32_t last_perf_update;
-int32_t perf_frame_count;
-char window_title[30];
 
 #ifdef TRACE
 bool trace_mode = false;
@@ -101,6 +95,8 @@ int instruction_counter;
 SDL_RWops *prg_file ;
 int prg_override_start = -1;
 bool run_after_load = false;
+
+char *nvram_path = NULL;
 
 #ifdef TRACE
 #include "rom_labels.h"
@@ -232,51 +228,6 @@ machine_paste(char *s)
 }
 
 void
-timing_init() {
-	frames = 0;
-	sdlTicks_base = SDL_GetTicks();
-	last_perf_update = 0;
-	perf_frame_count = 0;
-}
-
-void
-timing_update()
-{
-	frames++;
-	int32_t sdlTicks = SDL_GetTicks() - sdlTicks_base;
-	int32_t diff_time = 1000 * frames / 60 - sdlTicks;
-	if (!warp_mode && diff_time > 0) {
-		usleep(1000 * diff_time);
-	}
-
-	if (sdlTicks - last_perf_update > 5000) {
-		int32_t frameCount = frames - perf_frame_count;
-		int perf = frameCount / 3;
-
-		if (perf < 100 || warp_mode) {
-			sprintf(window_title, "Commander X16 (%d%%)", perf);
-			video_update_title(window_title);
-		} else {
-			video_update_title("Commander X16");
-		}
-
-		perf_frame_count = frames;
-		last_perf_update = sdlTicks;
-	}
-
-	if (log_speed) {
-		float frames_behind = -((float)diff_time / 16.666666);
-		int load = (int)((1 + frames_behind) * 100);
-		printf("Load: %d%%\n", load > 100 ? 100 : load);
-
-		if ((int)frames_behind > 0) {
-			printf("Rendering is behind %d frames.\n", -(int)frames_behind);
-		} else {
-		}
-	}
-}
-
-void
 machine_toggle_warp()
 {
 	warp_mode = !warp_mode;
@@ -389,6 +340,9 @@ usage()
 	printf("-ram <ramsize>\n");
 	printf("\tSpecify banked RAM size in KB (8, 16, 32, ..., 2048).\n");
 	printf("\tThe default is 512.\n");
+	printf("-nvram <nvram.bin>\n");
+	printf("\tSpecify NVRAM image. By default, the machine starts with\n");
+	printf("\trmpty NVRAM and does not save it to disk.\n");
 	printf("-keymap <keymap>\n");
 	printf("\tEnable a specific keyboard layout decode table.\n");
 	printf("-sdcard <sdcard.img>\n");
@@ -443,6 +397,8 @@ usage()
 	printf("\tSet the number of audio buffers used for playback. (default: 8)\n");
 	printf("\tIncreasing this will reduce stutter on slower computers,\n");
 	printf("\tbut will increase audio latency.\n");
+	printf("-rtc\n");
+	printf("\tSet the real-time-clock to the current system time and date.\n");
 #ifdef TRACE
 	printf("-trace [<address>]\n");
 	printf("\tPrint instruction trace. Optionally, a trigger address\n");
@@ -574,6 +530,15 @@ main(int argc, char **argv)
 			}
 			test_number = atoi(argv[0]);
 			run_test = true;
+			argc--;
+			argv++;
+		} else if (!strcmp(argv[0], "-nvram")) {
+			argc--;
+			argv++;
+			if (!argc || argv[0][0] == '-') {
+				usage();
+			}
+			nvram_path = argv[0];
 			argc--;
 			argv++;
 		} else if (!strcmp(argv[0], "-sdcard")) {
@@ -799,6 +764,10 @@ main(int argc, char **argv)
 			audio_buffers = (int)strtol(argv[0], NULL, 10);
 			argc--;
 			argv++;
+		} else if (!strcmp(argv[0], "-rtc")) {
+			argc--;
+			argv++;
+			set_system_time = true;
 		} else if (!strcmp(argv[0], "-version")){
 			printf("%s", VER_INFO);
 			argc--;
@@ -817,6 +786,16 @@ main(int argc, char **argv)
 	size_t rom_size = SDL_RWread(f, ROM, ROM_SIZE, 1);
 	(void)rom_size;
 	SDL_RWclose(f);
+
+	if (nvram_path) {
+		SDL_RWops *f = SDL_RWFromFile(nvram_path, "rb");
+		if (f) {
+			printf("%s %lu\n", nvram_path, sizeof(nvram));
+			int l = SDL_RWread(f, nvram, 1, sizeof(nvram));
+			printf("%d %x %x\n", l, nvram[0], nvram[1]);
+			SDL_RWclose(f);
+		}
+	}
 
 	if (sdcard_path) {
 		sdcard_file = SDL_RWFromFile(sdcard_path, "r+b");
@@ -866,6 +845,11 @@ main(int argc, char **argv)
 		snprintf(paste_text, sizeof(paste_text_data), "TEST %d\r", test_number);
 	}
 
+#ifdef SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR
+	// Don't disable compositing (on KDE for example)
+	// Available since SDL 2.0.8
+	SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
+#endif
 	SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER | SDL_INIT_AUDIO);
 
 	audio_init(audio_dev_name, audio_buffers);
@@ -874,6 +858,8 @@ main(int argc, char **argv)
 	video_init(window_scale, scale_quality);
 
 	joystick_init();
+
+	rtc_init(set_system_time);
 
 	machine_reset();
 
@@ -926,7 +912,7 @@ emscripten_main_loop(void) {
 }
 
 
-void*
+void *
 emulator_loop(void *param)
 {
 	for (;;) {
@@ -1020,6 +1006,7 @@ emulator_loop(void *param)
 			}
 			pc = (RAM[0x100 + sp + 1] | (RAM[0x100 + sp + 2] << 8)) + 1;
 			sp += 2;
+			continue;
 		}
 #endif
 
@@ -1030,15 +1017,25 @@ emulator_loop(void *param)
 		for (uint8_t i = 0; i < clocks; i++) {
 			ps2_step(0);
 			ps2_step(1);
+			i2c_step();
 			joystick_step();
 			vera_spi_step();
 			new_frame |= video_step(MHZ);
 		}
+		rtc_step(clocks);
 		audio_render(clocks);
 
 		instruction_counter++;
 
 		if (new_frame) {
+			if (nvram_dirty && nvram_path) {
+				SDL_RWops *f = SDL_RWFromFile(nvram_path, "wb");
+				if (f) {
+					SDL_RWwrite(f, nvram, 1, sizeof(nvram));
+					SDL_RWclose(f);
+				}
+			}
+
 			if (!video_update()) {
 				break;
 			}
@@ -1056,12 +1053,6 @@ emulator_loop(void *param)
 				irq6502();
 			}
 		}
-
-#if 0
-		if (clockticks6502 >= 5 * MHZ * 1000 * 1000) {
-			break;
-		}
-#endif
 
 		if (pc == 0xffff) {
 			if (save_on_exit) {
