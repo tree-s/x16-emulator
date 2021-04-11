@@ -2,6 +2,10 @@
 // Copyright (c) 2019 Michael Steil
 // All rights reserved. License: 2-clause BSD
 
+#ifndef __APPLE__
+#define _XOPEN_SOURCE   600
+#define _POSIX_C_SOURCE 1
+#endif
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -387,12 +391,17 @@ usage()
 	printf("-dump {C|R|B|V}...\n");
 	printf("\tConfigure system dump: (C)PU, (R)AM, (B)anked-RAM, (V)RAM\n");
 	printf("\tMultiple characters are possible, e.g. -dump CV ; Default: RB\n");
-	printf("-joy1 {NES | SNES}\n");
-	printf("\tChoose what type of joystick to use, e.g. -joy1 SNES\n");
-	printf("-joy2 {NES | SNES}\n");
-	printf("\tChoose what type of joystick to use, e.g. -joy2 SNES\n");
+	printf("-joy1\n");
+	printf("\tEnable binding a gamepad to SNES controller port 1\n");
+	printf("-joy2\n");
+	printf("\tEnable binding a gamepad to SNES controller port 2\n");
+	printf("-joy3\n");
+	printf("\tEnable binding a gamepad to SNES controller port 3\n");
+	printf("-joy4\n");
+	printf("\tEnable binding a gamepad to SNES controller port 4\n");
 	printf("-sound <output device>\n");
 	printf("\tSet the output device used for audio emulation\n");
+	printf("\tIf output device is 'none', no audio is generated\n");
 	printf("-abufs <number of audio buffers>\n");
 	printf("\tSet the number of audio buffers used for playback. (default: 8)\n");
 	printf("\tIncreasing this will reduce stutter on slower computers,\n");
@@ -646,51 +655,19 @@ main(int argc, char **argv)
 		} else if (!strcmp(argv[0], "-joy1")) {
 			argc--;
 			argv++;
-			if (!strcmp(argv[0], "NES")) {
-				joy_mode[0] = NES;
-				argc--;
-				argv++;
-			} else if (!strcmp(argv[0], "SNES")) {
-				joy_mode[0] = SNES;
-				argc--;
-				argv++;
-			}
+			Joystick_slots_enabled[0] = true;
 		} else if (!strcmp(argv[0], "-joy2")){
 			argc--;
 			argv++;
-			if (!strcmp(argv[0], "NES")){
-				joy_mode[1] = NES;
-				argc--;
-				argv++;
-			} else if (!strcmp(argv[0], "SNES")){
-				joy_mode[1] = SNES;
-				argc--;
-				argv++;
-			}
-		} else if (!strcmp(argv[0], "-joy3")){
+			Joystick_slots_enabled[1] = true;
+		} else if (!strcmp(argv[0], "-joy3")) {
 			argc--;
 			argv++;
-			if (!strcmp(argv[0], "NES")){
-				joy_mode[2] = NES;
-				argc--;
-				argv++;
-			} else if (!strcmp(argv[0], "SNES")){
-				joy_mode[2] = SNES;
-				argc--;
-				argv++;
-			}
-		} else if (!strcmp(argv[0], "-joy4")){
+			Joystick_slots_enabled[2] = true;
+		} else if (!strcmp(argv[0], "-joy4")) {
 			argc--;
 			argv++;
-			if (!strcmp(argv[0], "NES")){
-				joy_mode[3] = NES;
-				argc--;
-				argv++;
-			} else if (!strcmp(argv[0], "SNES")){
-				joy_mode[3] = SNES;
-				argc--;
-				argv++;
-			}
+			Joystick_slots_enabled[3] = true;
 #ifdef TRACE
 		} else if (!strcmp(argv[0], "-trace")) {
 			argc--;
@@ -790,9 +767,7 @@ main(int argc, char **argv)
 	if (nvram_path) {
 		SDL_RWops *f = SDL_RWFromFile(nvram_path, "rb");
 		if (f) {
-			printf("%s %lu\n", nvram_path, sizeof(nvram));
-			int l = SDL_RWread(f, nvram, 1, sizeof(nvram));
-			printf("%d %x %x\n", l, nvram[0], nvram[1]);
+			SDL_RWread(f, nvram, 1, sizeof(nvram));
 			SDL_RWclose(f);
 		}
 	}
@@ -1014,13 +989,10 @@ emulator_loop(void *param)
 		step6502();
 		uint8_t clocks = clockticks6502 - old_clockticks6502;
 		bool new_frame = false;
+		vera_spi_step(clocks);
+		new_frame |= video_step(MHZ, clocks);
 		for (uint8_t i = 0; i < clocks; i++) {
-			ps2_step(0);
-			ps2_step(1);
 			i2c_step();
-			joystick_step();
-			vera_spi_step();
-			new_frame |= video_step(MHZ);
 		}
 		rtc_step(clocks);
 		audio_render(clocks);
@@ -1034,6 +1006,7 @@ emulator_loop(void *param)
 					SDL_RWwrite(f, nvram, 1, sizeof(nvram));
 					SDL_RWclose(f);
 				}
+				nvram_dirty = false;
 			}
 
 			if (!video_update()) {
